@@ -61,10 +61,10 @@ func (f *Fetcher) FetchCandles(ctx context.Context, symbol string,
 
 		candles = append(candles, dhist.Candlestick{
 			Timestamp: int64(row[0]),
-			Open:      row[1],
-			High:      row[2],
-			Low:       row[3],
-			Close:     row[4],
+			Open:      float32(row[1]),
+			High:      float32(row[2]),
+			Low:       float32(row[3]),
+			Close:     float32(row[4]),
 			Volume:    row[5],
 		})
 	}
