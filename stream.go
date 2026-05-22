@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"math/rand"
 	"time"
+
+	"golang.org/x/time/rate"
 )
+
+var coinbaseReadLimiter = rate.NewLimiter(rate.Limit(60), 60)
 
 func StreamCandles(ctx context.Context, provider Provider, symbol string, start, end,
 	granularity int64, maxReqCap int64, maxConcurrent int) (<-chan []Candlestick, <-chan error) {
@@ -41,15 +45,21 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 				var batch []Candlestick
 				var err error
 
-				for attempt := range 3 {
+				for attempt := range 5 {
+					if err := coinbaseReadLimiter.Wait(ctx); err != nil {
+						return
+					}
+					if attempt > 0 {
+						fmt.Printf("Attempt #%d for batch %d\n", attempt, idx)
+					}
 					batch, err = provider.FetchCandles(ctx, symbol,
 						currentStart, reqEnd, granularity)
 					if err == nil {
 						break
 					}
 
-					backoff := time.Duration(200*(1<<attempt))*time.Millisecond +
-						time.Duration(rand.Intn(50))*time.Millisecond
+					backoff := time.Duration((1<<attempt))*time.Millisecond +
+						time.Duration(rand.Intn(500))*time.Millisecond
 
 					select {
 					case <-ctx.Done():
