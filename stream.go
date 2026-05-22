@@ -9,7 +9,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-var coinbaseReadLimiter = rate.NewLimiter(rate.Limit(60), 60)
+var coinbaseReadLimiter = rate.NewLimiter(rate.Limit(50), 1)
 
 func StreamCandles(ctx context.Context, provider Provider, symbol string, start, end,
 	granularity int64, maxReqCap int64, maxConcurrent int) (<-chan []Candlestick, <-chan error) {
@@ -58,7 +58,7 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 						break
 					}
 
-					backoff := time.Duration((1<<attempt))*time.Millisecond +
+					backoff := time.Duration((1<<attempt))*time.Second +
 						time.Duration(rand.Intn(500))*time.Millisecond
 
 					select {
