@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync/atomic"
 	"time"
 
 	dhist "github.com/0men1/DHist"
@@ -13,18 +14,38 @@ import (
 func main() {
 	provider := coinbase.NewFetcher()
 
-	// Define a 3-hour window
 	end := time.Now().Unix()
-	start := end - (3600 * 3)
-	granularity := int64(60) // 1 minute
+	granularity := int64(60)
+	start := end - (1_000_000 * granularity)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
-	outChan, errChan := dhist.StreamCandles(ctx, provider, "BTC-USD", start, end, granularity, 300, 5)
+	var batches, apiCalls, candles atomic.Uint64
+
+	telemetry := &dhist.StreamTelemetry{
+		OnRequest: func() {
+			apiCalls.Add(1)
+			fmt.Printf("# API CALLS: %d\n", apiCalls.Load())
+		},
+		OnBatch: func(count int) {
+			batches.Add(1)
+			candles.Add(uint64(count))
+			fmt.Printf("# Batches: %d\n", batches.Load())
+			fmt.Printf("Total Candles: %d\n", candles.Load())
+		},
+	}
+
+	outChan, errChan := dhist.StreamCandles(
+		ctx, provider, "BTC-USD", start, end, granularity, 300, 10,
+		dhist.WithTelemtry(telemetry),
+	)
 
 	totalCandles := 0
 	for batch := range outChan {
+		if len(batch) == 0 {
+			continue
+		}
 		fmt.Printf("Received batch of %d candles. First TS: %d\n", len(batch), batch[0].Timestamp)
 		totalCandles += len(batch)
 	}
