@@ -4,12 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	dhist "github.com/0men1/DHist"
 	"net/http"
 	"sort"
+	"strconv"
 	"time"
-
-	dhist "github.com/0men1/DHist"
 )
+
+type RateLimitError struct {
+	RetryAfter time.Duration
+}
+
+func (e *RateLimitError) Error() string {
+	return fmt.Sprintf("rate limited, retry after %s", e.RetryAfter)
+}
 
 type Fetcher struct {
 	client  *http.Client
@@ -20,6 +28,10 @@ func NewFetcher() *Fetcher {
 	return &Fetcher{
 		client: &http.Client{
 			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConnsPerHost: 20,
+				IdleConnTimeout:     30 * time.Second,
+			},
 		},
 		baseURL: "https://api.exchange.coinbase.com",
 	}
@@ -42,7 +54,15 @@ func (f *Fetcher) FetchCandles(ctx context.Context, symbol string,
 	}
 	defer resp.Body.Close()
 
-	fmt.Printf("%s\n", reqURL)
+	if resp.StatusCode == http.StatusTooManyRequests {
+		retryAfter := 2 * time.Second
+		if h := resp.Header.Get("Retry-After"); h != "" {
+			if secs, err := strconv.Atoi(h); err == nil {
+				retryAfter = time.Duration(secs) * time.Second
+			}
+		}
+		return nil, &RateLimitError{RetryAfter: retryAfter}
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("exchange returned status %d", resp.StatusCode)
@@ -53,12 +73,11 @@ func (f *Fetcher) FetchCandles(ctx context.Context, symbol string,
 		return nil, fmt.Errorf("json decoding failed: %w", err)
 	}
 
-	var candles []dhist.Candlestick
+	candles := make([]dhist.Candlestick, 0, len(rawData))
 	for _, row := range rawData {
 		if len(row) < 6 {
 			continue
 		}
-
 		candles = append(candles, dhist.Candlestick{
 			Timestamp: int64(row[0]),
 			Open:      float32(row[1]),

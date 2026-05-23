@@ -2,12 +2,19 @@ package dhist
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
+	"sync"
 	"time"
 
 	"golang.org/x/time/rate"
 )
+
+type RateLimitError interface {
+	error
+	RetryAfterDuration() time.Duration
+}
 
 type StreamTelemetry struct {
 	OnRequest func()
@@ -15,18 +22,16 @@ type StreamTelemetry struct {
 }
 
 type StreamConfig struct {
-	Telemtry *StreamTelemetry
+	Telemetry *StreamTelemetry
 }
 
 type StreamOption func(*StreamConfig)
 
-func WithTelemtry(t *StreamTelemetry) StreamOption {
+func WithTelemetry(t *StreamTelemetry) StreamOption {
 	return func(c *StreamConfig) {
-		c.Telemtry = t
+		c.Telemetry = t
 	}
 }
-
-var coinbaseReadLimiter = rate.NewLimiter(rate.Limit(50), 1)
 
 func StreamCandles(ctx context.Context, provider Provider, symbol string, start, end,
 	granularity int64, maxReqCap int64, maxConcurrent int,
@@ -45,89 +50,83 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 		batchStarts = append(batchStarts, t)
 	}
 
-	outChan := make(chan []Candlestick)
-	errChan := make(chan error, 1)
-	futures := make([]chan []Candlestick, len(batchStarts))
+	outChan := make(chan []Candlestick, maxConcurrent)
+	errChan := make(chan error, len(batchStarts))
 
-	for i := range futures {
-		futures[i] = make(chan []Candlestick, 1)
-	}
-
-	go func() {
-		sem := make(chan struct{}, maxConcurrent)
-
-		for i, bStart := range batchStarts {
-			sem <- struct{}{}
-
-			go func(idx int, currentStart int64) {
-				defer func() { <-sem }()
-
-				reqEnd := currentStart + (granularity * (maxReqCap - 1))
-				reqEnd = min(reqEnd, end)
-
-				var batch []Candlestick
-				var err error
-
-				for attempt := range 5 {
-					if err := coinbaseReadLimiter.Wait(ctx); err != nil {
-						return
-					}
-
-					if config.Telemtry != nil && config.Telemtry.OnRequest != nil {
-						config.Telemtry.OnRequest()
-					}
-
-					batch, err = provider.FetchCandles(ctx, symbol,
-						currentStart, reqEnd, granularity)
-
-					if config.Telemtry != nil && config.Telemtry.OnBatch != nil {
-						config.Telemtry.OnBatch(len(batch))
-					}
-
-					if err == nil {
-						break
-					}
-
-					backoff := time.Duration((1<<attempt))*time.Second +
-						time.Duration(rand.Intn(500))*time.Millisecond
-
-					select {
-					case <-ctx.Done():
-						return
-					case <-time.After(backoff):
-					}
-				}
-				if err != nil {
-					select {
-					case errChan <- fmt.Errorf("batch %d failed at %d: %w",
-						idx, currentStart, err):
-					default:
-					}
-					close(futures[idx])
-					return
-				}
-				futures[idx] <- batch
-				close(futures[idx])
-			}(i, bStart)
-		}
-	}()
+	limiter := rate.NewLimiter(rate.Limit(8), maxConcurrent)
 
 	go func() {
 		defer close(outChan)
 		defer close(errChan)
 
-		for _, future := range futures {
-			select {
-			case <-ctx.Done():
-				errChan <- ctx.Err()
-				return
-			case batch, ok := <-future:
-				if !ok {
-					continue
-				}
-				outChan <- batch
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, maxConcurrent)
+
+		for _, bStart := range batchStarts {
+			if err := limiter.Wait(ctx); err != nil {
+				errChan <- err
+				break
 			}
+
+			sem <- struct{}{}
+			wg.Add(1)
+
+			go func(currentStart int64) {
+				defer wg.Done()
+				defer func() { <-sem }()
+
+				reqEnd := min(currentStart+(granularity*(maxReqCap-1)), end)
+
+				var batch []Candlestick
+				var err error
+
+				for attempt := range 5 {
+					if config.Telemetry != nil && config.Telemetry.OnRequest != nil {
+						config.Telemetry.OnRequest()
+					}
+
+					batch, err = provider.FetchCandles(ctx, symbol,
+						currentStart, reqEnd, granularity)
+
+					if err == nil {
+						if config.Telemetry != nil && config.Telemetry.OnBatch != nil {
+							config.Telemetry.OnBatch(len(batch))
+						}
+						select {
+						case outChan <- batch:
+						case <-ctx.Done():
+						}
+						return
+					}
+
+					// 429 — respect Retry-After exactly
+					var rlErr RateLimitError
+					if errors.As(err, &rlErr) {
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(rlErr.RetryAfterDuration()):
+						}
+						continue
+					}
+
+					// transient error — exponential backoff with jitter
+					if attempt < 4 {
+						backoff := time.Duration(1<<attempt)*time.Second +
+							time.Duration(rand.Intn(500))*time.Millisecond
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(backoff):
+						}
+					}
+				}
+
+				errChan <- fmt.Errorf("batch at %d failed: %w", currentStart, err)
+			}(bStart)
 		}
+
+		wg.Wait()
 	}()
 
 	return outChan, errChan
