@@ -9,10 +9,33 @@ import (
 	"golang.org/x/time/rate"
 )
 
+type StreamTelemetry struct {
+	OnRequest func()
+	OnBatch   func(candleCount int)
+}
+
+type StreamConfig struct {
+	Telemtry *StreamTelemetry
+}
+
+type StreamOption func(*StreamConfig)
+
+func WithTelemtry(t *StreamTelemetry) StreamOption {
+	return func(c *StreamConfig) {
+		c.Telemtry = t
+	}
+}
+
 var coinbaseReadLimiter = rate.NewLimiter(rate.Limit(50), 1)
 
 func StreamCandles(ctx context.Context, provider Provider, symbol string, start, end,
-	granularity int64, maxReqCap int64, maxConcurrent int) (<-chan []Candlestick, <-chan error) {
+	granularity int64, maxReqCap int64, maxConcurrent int,
+	opts ...StreamOption) (<-chan []Candlestick, <-chan error) {
+
+	config := &StreamConfig{}
+	for _, opt := range opts {
+		opt(config)
+	}
 
 	blockDuration := granularity * maxReqCap
 	alignedStart := (start / blockDuration) * blockDuration
@@ -49,11 +72,18 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 					if err := coinbaseReadLimiter.Wait(ctx); err != nil {
 						return
 					}
-					if attempt > 0 {
-						fmt.Printf("Attempt #%d for batch %d\n", attempt, idx)
+
+					if config.Telemtry != nil && config.Telemtry.OnRequest != nil {
+						config.Telemtry.OnRequest()
 					}
+
 					batch, err = provider.FetchCandles(ctx, symbol,
 						currentStart, reqEnd, granularity)
+
+					if config.Telemtry != nil && config.Telemtry.OnBatch != nil {
+						config.Telemtry.OnBatch(len(batch))
+					}
+
 					if err == nil {
 						break
 					}
@@ -93,7 +123,7 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 				return
 			case batch, ok := <-future:
 				if !ok {
-					return
+					continue
 				}
 				outChan <- batch
 			}
