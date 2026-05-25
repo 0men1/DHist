@@ -20,6 +20,10 @@ func (e *RateLimitError) Error() string {
 	return fmt.Sprintf("rate limited, retry after %s", e.RetryAfter)
 }
 
+func (e *RateLimitError) RetryAfterDuration() time.Duration {
+	return e.RetryAfter
+}
+
 type Fetcher struct {
 	client  *http.Client
 	baseURL string
@@ -69,6 +73,11 @@ type CoinbaseCandle struct {
 func (f *Fetcher) FetchCandles(ctx context.Context, symbol string,
 	start, end, granularity int64) ([]dhist.Candlestick, error) {
 
+	// Prevent millisecond timestamp scale errors
+	if start > 9999999999 || end > 9999999999 {
+		return nil, fmt.Errorf("timestamps must be in seconds, not milliseconds")
+	}
+
 	reqURL := fmt.Sprintf("%s/products/%s/candles?granularity=%s&start=%d&end=%d",
 		f.baseURL, symbol, granToText(granularity), start, end)
 
@@ -76,6 +85,9 @@ func (f *Fetcher) FetchCandles(ctx context.Context, symbol string,
 	if err != nil {
 		return nil, fmt.Errorf("request creation failed: %w", err)
 	}
+
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "DHist-Data-Pipeline/1.0")
 
 	resp, err := f.client.Do(req)
 	if err != nil {
@@ -94,7 +106,7 @@ func (f *Fetcher) FetchCandles(ctx context.Context, symbol string,
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("exchange returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("exchange returned status %d for symbol %s", resp.StatusCode, symbol)
 	}
 
 	var rawData CoinbaseResponse
