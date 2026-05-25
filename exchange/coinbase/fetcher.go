@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	dhist "github.com/0men1/DHist"
 	"net/http"
 	"sort"
 	"strconv"
 	"time"
+
+	dhist "github.com/0men1/DHist"
 )
 
 type RateLimitError struct {
@@ -33,15 +34,43 @@ func NewFetcher() *Fetcher {
 				IdleConnTimeout:     30 * time.Second,
 			},
 		},
-		baseURL: "https://api.exchange.coinbase.com",
+		baseURL: "https://api.coinbase.com/api/v3/brokerage/market",
 	}
+}
+
+func granToText(granularity int64) string {
+	switch granularity {
+	case 60:
+		return "ONE_MINUTE"
+	case 300:
+		return "FIVE_MINUTE"
+	case 900:
+		return "FIFTEEN_MINUTE"
+	case 3600:
+		return "ONE_HOUR"
+	default:
+		return "ONE_MINUTE"
+	}
+}
+
+type CoinbaseResponse struct {
+	Candles []CoinbaseCandle `json:"candles"`
+}
+
+type CoinbaseCandle struct {
+	Start  string `json:"start"`
+	Low    string `json:"low"`
+	High   string `json:"high"`
+	Open   string `json:"open"`
+	Close  string `json:"close"`
+	Volume string `json:"volume"`
 }
 
 func (f *Fetcher) FetchCandles(ctx context.Context, symbol string,
 	start, end, granularity int64) ([]dhist.Candlestick, error) {
 
-	reqURL := fmt.Sprintf("%s/products/%s/candles?granularity=%d&start=%d&end=%d",
-		f.baseURL, symbol, granularity, start, end)
+	reqURL := fmt.Sprintf("%s/products/%s/candles?granularity=%s&start=%d&end=%d",
+		f.baseURL, symbol, granToText(granularity), start, end)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
@@ -68,23 +97,27 @@ func (f *Fetcher) FetchCandles(ctx context.Context, symbol string,
 		return nil, fmt.Errorf("exchange returned status %d", resp.StatusCode)
 	}
 
-	var rawData [][]float64
+	var rawData CoinbaseResponse
 	if err := json.NewDecoder(resp.Body).Decode(&rawData); err != nil {
 		return nil, fmt.Errorf("json decoding failed: %w", err)
 	}
 
-	candles := make([]dhist.Candlestick, 0, len(rawData))
-	for _, row := range rawData {
-		if len(row) < 6 {
-			continue
-		}
+	candles := make([]dhist.Candlestick, 0, len(rawData.Candles))
+	for _, row := range rawData.Candles {
+		timestamp, _ := strconv.ParseInt(row.Start, 10, 64)
+		open, _ := strconv.ParseFloat(row.Open, 32)
+		high, _ := strconv.ParseFloat(row.High, 32)
+		low, _ := strconv.ParseFloat(row.Low, 32)
+		closePrice, _ := strconv.ParseFloat(row.Close, 32)
+		volume, _ := strconv.ParseFloat(row.Volume, 64)
+
 		candles = append(candles, dhist.Candlestick{
-			Timestamp: int64(row[0]),
-			Open:      float32(row[1]),
-			High:      float32(row[2]),
-			Low:       float32(row[3]),
-			Close:     float32(row[4]),
-			Volume:    row[5],
+			Timestamp: timestamp,
+			Open:      float32(open),
+			High:      float32(high),
+			Low:       float32(low),
+			Close:     float32(closePrice),
+			Volume:    volume,
 		})
 	}
 
