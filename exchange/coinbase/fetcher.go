@@ -73,11 +73,6 @@ type CoinbaseCandle struct {
 func (f *Fetcher) FetchCandles(ctx context.Context, symbol string,
 	start, end, granularity int64) ([]dhist.Candlestick, error) {
 
-	// Prevent millisecond timestamp scale errors
-	if start > 9999999999 || end > 9999999999 {
-		return nil, fmt.Errorf("timestamps must be in seconds, not milliseconds")
-	}
-
 	reqURL := fmt.Sprintf("%s/products/%s/candles?granularity=%s&start=%d&end=%d",
 		f.baseURL, symbol, granToText(granularity), start, end)
 

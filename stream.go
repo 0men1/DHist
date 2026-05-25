@@ -89,10 +89,11 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 					if err == nil {
 						limiter.Success()
 						if config.Telemetry != nil && config.Telemetry.OnBatch != nil {
-							go config.Telemetry.OnBatch(len(batch))
+							config.Telemetry.OnBatch(len(batch))
 						}
 						select {
 						case outChan <- batch:
+							fmt.Println("BATCH SENT")
 						case <-ctx.Done():
 						}
 						return
