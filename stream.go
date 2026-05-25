@@ -7,8 +7,6 @@ import (
 	"math/rand"
 	"sync"
 	"time"
-
-	"golang.org/x/time/rate"
 )
 
 type RateLimitError interface {
@@ -53,7 +51,7 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 	outChan := make(chan []Candlestick, maxConcurrent)
 	errChan := make(chan error, len(batchStarts))
 
-	limiter := rate.NewLimiter(rate.Limit(8), maxConcurrent)
+	limiter := NewAdaptiveRateLimiter(8, 50, 1, maxConcurrent)
 
 	go func() {
 		defer close(outChan)
@@ -89,6 +87,7 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 						currentStart, reqEnd, granularity)
 
 					if err == nil {
+						limiter.Success()
 						if config.Telemetry != nil && config.Telemetry.OnBatch != nil {
 							config.Telemetry.OnBatch(len(batch))
 						}
@@ -102,6 +101,7 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 					// 429 — respect Retry-After exactly
 					var rlErr RateLimitError
 					if errors.As(err, &rlErr) {
+						limiter.RateLimited()
 						select {
 						case <-ctx.Done():
 							return
