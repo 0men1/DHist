@@ -37,7 +37,7 @@ func main() {
 	}
 
 	outChan, errChan := dhist.StreamCandles(
-		ctx, provider, "BTC-USD", start, end, granularity, 300, 20,
+		ctx, provider, "BTC-USD", start, end, granularity, 350, 10,
 		dhist.WithTelemetry(telemetry),
 	)
 

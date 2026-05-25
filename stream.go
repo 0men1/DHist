@@ -93,7 +93,6 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 						}
 						select {
 						case outChan <- batch:
-							fmt.Println("BATCH SENT")
 						case <-ctx.Done():
 						}
 						return
@@ -123,6 +122,7 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 					}
 				}
 
+				limiter.Success()
 				errChan <- fmt.Errorf("batch at %d failed: %w", currentStart, err)
 			}(bStart)
 		}
