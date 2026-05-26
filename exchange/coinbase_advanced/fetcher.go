@@ -93,7 +93,6 @@ func (f *CoinbaseAdvancedFetcher) FetchCandles(ctx context.Context, symbol strin
 
 	candles := make([]exchange.Candlestick, 0, len(rawData.Candles))
 	for _, row := range rawData.Candles {
-		fmt.Println(row)
 		timestamp, _ := strconv.ParseInt(row.Start, 10, 64)
 		open, _ := strconv.ParseFloat(row.Open, 32)
 		high, _ := strconv.ParseFloat(row.High, 32)

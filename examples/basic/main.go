@@ -65,7 +65,6 @@ StreamLoop:
 				continue
 			}
 			fmt.Printf("Received batch of %d candles. First TS: %d\n", len(batch), batch[0].Timestamp)
-			fmt.Println(batch)
 			totalCandles += len(batch)
 		}
 	}
