@@ -37,21 +37,32 @@ func main() {
 	}
 
 	outChan, errChan := dhist.StreamCandles(
-		ctx, provider, "BTC-USD", start, end, granularity, 350, 10,
+		ctx, provider, "btc-usd", start, end, granularity, 300, 10,
 		dhist.WithTelemetry(telemetry),
 	)
 
 	totalCandles := 0
-	for batch := range outChan {
-		if len(batch) == 0 {
-			continue
-		}
-		fmt.Printf("Received batch of %d candles. First TS: %d\n", len(batch), batch[0].Timestamp)
-		totalCandles += len(batch)
-	}
 
-	if err := <-errChan; err != nil {
-		log.Fatalf("Stream failed: %v", err)
+StreamLoop:
+	for {
+		select {
+		case err := <-errChan:
+			if err != nil {
+				log.Fatalf("Stream failed: %v", err)
+
+			}
+
+		case batch, ok := <-outChan:
+			if !ok {
+				break StreamLoop
+			}
+			if len(batch) == 0 {
+				continue
+			}
+			fmt.Printf("Received batch of %d candles. First TS: %d\n", len(batch), batch[0].Timestamp)
+			fmt.Println(batch)
+			totalCandles += len(batch)
+		}
 	}
 
 	fmt.Printf("Successfully fetched %d total candles.\n", totalCandles)

@@ -122,7 +122,6 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 					}
 				}
 
-				limiter.Success()
 				errChan <- fmt.Errorf("batch at %d failed: %w", currentStart, err)
 			}(bStart)
 		}
