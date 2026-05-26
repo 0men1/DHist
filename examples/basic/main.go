@@ -16,7 +16,7 @@ func main() {
 
 	end := time.Now().Unix()
 	granularity := int64(60)
-	start := end - (1_000_000 * granularity)
+	start := end - (5000 * granularity)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()

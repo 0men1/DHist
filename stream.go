@@ -7,6 +7,8 @@ import (
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/0men1/DHist/exchange"
 )
 
 type RateLimitError interface {
@@ -31,9 +33,9 @@ func WithTelemetry(t *StreamTelemetry) StreamOption {
 	}
 }
 
-func StreamCandles(ctx context.Context, provider Provider, symbol string, start, end,
+func StreamCandles(ctx context.Context, provider exchange.Provider, symbol string, start, end,
 	granularity int64, maxReqCap int64, maxConcurrent int,
-	opts ...StreamOption) (<-chan []Candlestick, <-chan error) {
+	opts ...StreamOption) (<-chan []exchange.Candlestick, <-chan error) {
 
 	config := &StreamConfig{}
 	for _, opt := range opts {
@@ -48,7 +50,7 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 		batchStarts = append(batchStarts, t)
 	}
 
-	outChan := make(chan []Candlestick, maxConcurrent)
+	outChan := make(chan []exchange.Candlestick, maxConcurrent)
 	errChan := make(chan error, len(batchStarts))
 
 	limiter := NewAdaptiveRateLimiter(8, 50, 1, maxConcurrent)
@@ -75,7 +77,7 @@ func StreamCandles(ctx context.Context, provider Provider, symbol string, start,
 
 				reqEnd := min(currentStart+(granularity*(maxReqCap-1)), end)
 
-				var batch []Candlestick
+				var batch []exchange.Candlestick
 				var err error
 
 				for attempt := range 5 {

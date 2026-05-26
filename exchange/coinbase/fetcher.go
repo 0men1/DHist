@@ -4,51 +4,40 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	dhist "github.com/0men1/DHist"
+	"github.com/0men1/DHist/exchange"
 	"net/http"
 	"sort"
 	"strconv"
 	"time"
 )
 
-type RateLimitError struct {
-	RetryAfter time.Duration
-}
+type CoinbaseFetcher exchange.Fetcher
 
-func (e *RateLimitError) Error() string {
-	return fmt.Sprintf("rate limited, retry after %s", e.RetryAfter)
-}
-
-type Fetcher struct {
-	client  *http.Client
-	baseURL string
-}
-
-func NewFetcher() *Fetcher {
-	return &Fetcher{
-		client: &http.Client{
+func NewFetcher() *CoinbaseFetcher {
+	return &CoinbaseFetcher{
+		Client: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
 				MaxIdleConnsPerHost: 20,
 				IdleConnTimeout:     30 * time.Second,
 			},
 		},
-		baseURL: "https://api.exchange.coinbase.com",
+		BaseURL: "https://api.exchange.coinbase.com",
 	}
 }
 
-func (f *Fetcher) FetchCandles(ctx context.Context, symbol string,
-	start, end, granularity int64) ([]dhist.Candlestick, error) {
+func (f *CoinbaseFetcher) FetchCandles(ctx context.Context, symbol string,
+	start, end, granularity int64) ([]exchange.Candlestick, error) {
 
 	reqURL := fmt.Sprintf("%s/products/%s/candles?granularity=%d&start=%d&end=%d",
-		f.baseURL, symbol, granularity, start, end)
+		f.BaseURL, symbol, granularity, start, end)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("request creation failed: %w", err)
 	}
 
-	resp, err := f.client.Do(req)
+	resp, err := f.Client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("http request failed: %w", err)
 	}
@@ -61,7 +50,7 @@ func (f *Fetcher) FetchCandles(ctx context.Context, symbol string,
 				retryAfter = time.Duration(secs) * time.Second
 			}
 		}
-		return nil, &RateLimitError{RetryAfter: retryAfter}
+		return nil, &exchange.RateLimitError{RetryAfter: retryAfter}
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -73,12 +62,12 @@ func (f *Fetcher) FetchCandles(ctx context.Context, symbol string,
 		return nil, fmt.Errorf("json decoding failed: %w", err)
 	}
 
-	candles := make([]dhist.Candlestick, 0, len(rawData))
+	candles := make([]exchange.Candlestick, 0, len(rawData))
 	for _, row := range rawData {
 		if len(row) < 6 {
 			continue
 		}
-		candles = append(candles, dhist.Candlestick{
+		candles = append(candles, exchange.Candlestick{
 			Timestamp: int64(row[0]),
 			Low:       float32(row[1]),
 			High:      float32(row[2]),

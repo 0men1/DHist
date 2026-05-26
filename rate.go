@@ -41,4 +41,3 @@ func (a *AdaptiveRateLimiter) RateLimited() {
 	a.current = max(a.current*0.6, a.min)
 	a.inner.SetLimit(rate.Limit(a.current))
 }
-
