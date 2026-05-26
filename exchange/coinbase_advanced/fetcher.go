@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -14,12 +15,10 @@ import (
 
 type CoinbaseAdvancedFetcher struct {
 	exchange.Fetcher
-	APIKey string
 }
 
-func NewFetcher(apiKey string) *CoinbaseAdvancedFetcher {
+func NewFetcher() *CoinbaseAdvancedFetcher {
 	return &CoinbaseAdvancedFetcher{
-		APIKey: apiKey,
 		Fetcher: exchange.Fetcher{
 			Client: &http.Client{
 				Timeout: 10 * time.Second,
@@ -28,7 +27,7 @@ func NewFetcher(apiKey string) *CoinbaseAdvancedFetcher {
 					IdleConnTimeout:     30 * time.Second,
 				},
 			},
-			BaseURL: "https://api.coinbase.com/api/v3/brokerage/market",
+			BaseURL: "https://api.coinbase.com/api/v3/brokerage",
 		},
 	}
 }
@@ -51,14 +50,18 @@ func granToText(granularity int64) string {
 func (f *CoinbaseAdvancedFetcher) FetchCandles(ctx context.Context, symbol string,
 	start, end, granularity int64) ([]exchange.Candlestick, error) {
 
-	reqURL := fmt.Sprintf("%s/products/%s/candles?granularity=%s&start=%d&end=%d",
-		f.BaseURL, symbol, granToText(granularity), start, end)
+	requestMethod := "GET"
+	basePath := fmt.Sprintf("/api/v3/brokerage/products/%s/candles", symbol)
+	jwt := generateJWT(requestMethod, basePath)
+	queryParams := fmt.Sprintf("?granularity=%s&start=%d&end=%d", granToText(granularity), start, end)
+	reqURL := fmt.Sprintf("https://api.coinbase.com%s%s", basePath, queryParams)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("request creation failed: %w", err)
 	}
 
+	req.Header.Set("Authorization", "Bearer "+jwt)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "DHist-Data-Pipeline/1.0")
 
@@ -79,7 +82,8 @@ func (f *CoinbaseAdvancedFetcher) FetchCandles(ctx context.Context, symbol strin
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("exchange returned status %d for symbol %s", resp.StatusCode, symbol)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("exchange returned status %d for symbol %s. Details: %s", resp.StatusCode, symbol, string(bodyBytes))
 	}
 
 	var rawData Response
@@ -89,6 +93,7 @@ func (f *CoinbaseAdvancedFetcher) FetchCandles(ctx context.Context, symbol strin
 
 	candles := make([]exchange.Candlestick, 0, len(rawData.Candles))
 	for _, row := range rawData.Candles {
+		fmt.Println(row)
 		timestamp, _ := strconv.ParseInt(row.Start, 10, 64)
 		open, _ := strconv.ParseFloat(row.Open, 32)
 		high, _ := strconv.ParseFloat(row.High, 32)

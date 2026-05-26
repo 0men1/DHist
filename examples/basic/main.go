@@ -3,16 +3,21 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/joho/godotenv"
 	"log"
 	"sync/atomic"
 	"time"
 
 	dhist "github.com/0men1/DHist"
-	"github.com/0men1/DHist/exchange/coinbase"
+	coinbaseadvanced "github.com/0men1/DHist/exchange/coinbase_advanced"
 )
 
 func main() {
-	provider := coinbase.NewFetcher()
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("Error loading .env file")
+	}
+	provider := coinbaseadvanced.NewFetcher()
 
 	end := time.Now().Unix()
 	granularity := int64(60)
@@ -37,7 +42,7 @@ func main() {
 	}
 
 	outChan, errChan := dhist.StreamCandles(
-		ctx, provider, "btc-usd", start, end, granularity, 300, 10,
+		ctx, provider, "SOL-USD", start, end, granularity, 350, 1,
 		dhist.WithTelemetry(telemetry),
 	)
 
