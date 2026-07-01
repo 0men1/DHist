@@ -69,6 +69,8 @@ func StreamCandles(ctx context.Context, provider exchange.Provider, symbol strin
 
 		resultChan := make(chan IndexedBatch, maxConcurrent)
 		go func() {
+			defer close(resultChan)
+
 			for i, bStart := range batchStarts {
 				if err := limiter.Wait(ctx); err != nil {
 					errChan <- err
@@ -88,6 +90,10 @@ func StreamCandles(ctx context.Context, provider exchange.Provider, symbol strin
 					var err error
 
 					for attempt := range 5 {
+						if err := limiter.Wait(ctx); err != nil {
+							errChan <- err
+							return
+						}
 						if config.Telemetry != nil && config.Telemetry.OnRequest != nil {
 							config.Telemetry.OnRequest()
 						}
@@ -101,7 +107,7 @@ func StreamCandles(ctx context.Context, provider exchange.Provider, symbol strin
 								config.Telemetry.OnBatch(len(rawBatch))
 							}
 							select {
-							case resultChan <- IndexedBatch{index: i, candles: rawBatch}:
+							case resultChan <- IndexedBatch{index: index, candles: rawBatch}:
 							case <-ctx.Done():
 							}
 							return
