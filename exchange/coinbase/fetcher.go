@@ -68,11 +68,11 @@ func (f *CoinbaseFetcher) FetchCandles(ctx context.Context, symbol string,
 			continue
 		}
 		candles = append(candles, exchange.Candlestick{
-			Timestamp: int64(row[0]),
-			Low:       float32(row[1]),
-			High:      float32(row[2]),
-			Open:      float32(row[3]),
-			Close:     float32(row[4]),
+			Timestamp: uint64(row[0]),
+			Low:       float64(row[1]),
+			High:      float64(row[2]),
+			Open:      float64(row[3]),
+			Close:     float64(row[4]),
 			Volume:    row[5],
 		})
 	}

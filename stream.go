@@ -25,6 +25,11 @@ type StreamConfig struct {
 	Telemetry *StreamTelemetry
 }
 
+type IndexedBatch struct {
+	candles []exchange.Candlestick
+	index   int
+}
+
 type StreamOption func(*StreamConfig)
 
 func WithTelemetry(t *StreamTelemetry) StreamOption {
@@ -62,73 +67,95 @@ func StreamCandles(ctx context.Context, provider exchange.Provider, symbol strin
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, maxConcurrent)
 
-		for _, bStart := range batchStarts {
-			if err := limiter.Wait(ctx); err != nil {
-				errChan <- err
-				break
-			}
-
-			sem <- struct{}{}
-			wg.Add(1)
-
-			go func(currentStart int64) {
-				defer wg.Done()
-				defer func() { <-sem }()
-
-				reqEnd := min(currentStart+(granularity*(maxReqCap-1)), end)
-
-				var batch []exchange.Candlestick
-				var err error
-
-				for attempt := range 5 {
-					if config.Telemetry != nil && config.Telemetry.OnRequest != nil {
-						config.Telemetry.OnRequest()
-					}
-
-					batch, err = provider.FetchCandles(ctx, symbol,
-						currentStart, reqEnd, granularity)
-
-					if err == nil {
-						limiter.Success()
-						if config.Telemetry != nil && config.Telemetry.OnBatch != nil {
-							config.Telemetry.OnBatch(len(batch))
-						}
-						select {
-						case outChan <- batch:
-						case <-ctx.Done():
-						}
-						return
-					}
-
-					// 429 — respect Retry-After exactly
-					var rlErr RateLimitError
-					if errors.As(err, &rlErr) {
-						limiter.RateLimited()
-						select {
-						case <-ctx.Done():
-							return
-						case <-time.After(rlErr.RetryAfterDuration()):
-						}
-						continue
-					}
-
-					// transient error — exponential backoff with jitter
-					if attempt < 4 {
-						backoff := time.Duration(1<<attempt)*time.Second +
-							time.Duration(rand.Intn(500))*time.Millisecond
-						select {
-						case <-ctx.Done():
-							return
-						case <-time.After(backoff):
-						}
-					}
+		resultChan := make(chan IndexedBatch, maxConcurrent)
+		go func() {
+			for i, bStart := range batchStarts {
+				if err := limiter.Wait(ctx); err != nil {
+					errChan <- err
+					break
 				}
 
-				errChan <- fmt.Errorf("batch at %d failed: %w", currentStart, err)
-			}(bStart)
-		}
+				sem <- struct{}{}
+				wg.Add(1)
 
-		wg.Wait()
+				go func(currentStart int64, index int) {
+					defer wg.Done()
+					defer func() { <-sem }()
+
+					reqEnd := min(currentStart+(granularity*(maxReqCap-1)), end)
+
+					var rawBatch []exchange.Candlestick
+					var err error
+
+					for attempt := range 5 {
+						if config.Telemetry != nil && config.Telemetry.OnRequest != nil {
+							config.Telemetry.OnRequest()
+						}
+
+						rawBatch, err = provider.FetchCandles(ctx, symbol,
+							currentStart, reqEnd, granularity)
+
+						if err == nil {
+							limiter.Success()
+							if config.Telemetry != nil && config.Telemetry.OnBatch != nil {
+								config.Telemetry.OnBatch(len(rawBatch))
+							}
+							select {
+							case resultChan <- IndexedBatch{index: i, candles: rawBatch}:
+							case <-ctx.Done():
+							}
+							return
+						}
+
+						// 429 — respect Retry-After exactly
+						var rlErr RateLimitError
+						if errors.As(err, &rlErr) {
+							limiter.RateLimited()
+							select {
+							case <-ctx.Done():
+								return
+							case <-time.After(rlErr.RetryAfterDuration()):
+							}
+							continue
+						}
+
+						// transient error — exponential backoff with jitter
+						if attempt < 4 {
+							backoff := time.Duration(1<<attempt)*time.Second +
+								time.Duration(rand.Intn(500))*time.Millisecond
+							select {
+							case <-ctx.Done():
+								return
+							case <-time.After(backoff):
+							}
+						}
+					}
+
+					errChan <- fmt.Errorf("batch at %d failed: %w", currentStart, err)
+				}(bStart, i)
+			}
+			wg.Wait()
+		}()
+
+		pending := make(map[int][]exchange.Candlestick)
+		next := 0
+
+		for res := range resultChan {
+			pending[res.index] = res.candles
+			for {
+				candles, ok := pending[next]
+				if !ok {
+					break
+				}
+				delete(pending, next)
+				select {
+				case outChan <- candles:
+				case <-ctx.Done():
+					return
+				}
+				next++
+			}
+		}
 	}()
 
 	return outChan, errChan

@@ -94,18 +94,18 @@ func (f *CoinbaseAdvancedFetcher) FetchCandles(ctx context.Context, symbol strin
 	candles := make([]exchange.Candlestick, 0, len(rawData.Candles))
 	for _, row := range rawData.Candles {
 		timestamp, _ := strconv.ParseInt(row.Start, 10, 64)
-		open, _ := strconv.ParseFloat(row.Open, 32)
-		high, _ := strconv.ParseFloat(row.High, 32)
-		low, _ := strconv.ParseFloat(row.Low, 32)
-		closePrice, _ := strconv.ParseFloat(row.Close, 32)
+		open, _ := strconv.ParseFloat(row.Open, 64)
+		high, _ := strconv.ParseFloat(row.High, 64)
+		low, _ := strconv.ParseFloat(row.Low, 64)
+		closePrice, _ := strconv.ParseFloat(row.Close, 64)
 		volume, _ := strconv.ParseFloat(row.Volume, 64)
 
 		candles = append(candles, exchange.Candlestick{
-			Timestamp: timestamp,
-			Open:      float32(open),
-			High:      float32(high),
-			Low:       float32(low),
-			Close:     float32(closePrice),
+			Timestamp: uint64(timestamp),
+			Open:      open,
+			High:      high,
+			Low:       low,
+			Close:     closePrice,
 			Volume:    volume,
 		})
 	}
