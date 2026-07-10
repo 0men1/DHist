@@ -39,6 +39,10 @@ func main() {
 			fmt.Printf("# Batches: %d\n", batches.Load())
 			fmt.Printf("Total Candles: %d\n", candles.Load())
 		},
+		OnComplete: func(expected, received int64) {
+			fmt.Printf("Reconciliation: expected=%d received=%d (missing=%d)\n",
+				expected, received, expected-received)
+		},
 	}
 
 	outChan, errChan := dhist.StreamCandles(
@@ -48,24 +52,19 @@ func main() {
 
 	totalCandles := 0
 
-StreamLoop:
-	for {
-		select {
-		case err := <-errChan:
-			if err != nil {
-				log.Fatalf("Stream failed: %v", err)
+	// Drain all data first. outChan closing signals the run is over (clean or
+	// aborted); any terminal error is buffered on errChan and surfaced after.
+	for batch := range outChan {
+		if len(batch) == 0 {
+			continue
+		}
+		fmt.Printf("Received batch of %d candles. First TS: %d\n", len(batch), batch[0].Timestamp)
+		totalCandles += len(batch)
+	}
 
-			}
-
-		case batch, ok := <-outChan:
-			if !ok {
-				break StreamLoop
-			}
-			if len(batch) == 0 {
-				continue
-			}
-			fmt.Printf("Received batch of %d candles. First TS: %d\n", len(batch), batch[0].Timestamp)
-			totalCandles += len(batch)
+	for err := range errChan {
+		if err != nil {
+			log.Fatalf("Stream failed after %d candles: %v", totalCandles, err)
 		}
 	}
 
